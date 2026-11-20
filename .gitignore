@@ -2,6 +2,14 @@
 *
 !/.gitignore
 !/README.md
+!/deploy/
+!/deploy/README.md
+!/deploy/build_bundle.py
+!/deploy/check_server.py
+!/deploy/service-constraints.txt
+!/deploy/Check-Server.cmd
+!/deploy/Create-User.cmd
+!/deploy/Start-Server.cmd
 !/poc/
 !/poc/gpu_usage.py
 !/poc/gui_baseline.py
@@ -28,3 +36,4 @@
 !/tests/
 !/tests/test_service.py
 !/tests/blender_smoke.py
+!/tests/test_bundle.py

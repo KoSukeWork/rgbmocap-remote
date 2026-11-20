@@ -2,6 +2,26 @@
 
 在 Blender 5.3 中选择一段单人视频，交给 Windows 服务器上的 ExMR、GVHMR 或 FlowHMR 重建，再把带关键帧的 FBX 骨架导入当前场景。客户端只需要 Blender。服务端复用上游固定版本的 Python、CUDA 模型和导出工具。
 
+## 复用 RGBMoCap-Server 离线包
+
+**已经拷完的服务器可以直接验收。** 在服务器本地的 `RGBMoCap-Server` 文件夹打开 PowerShell，运行 `.\Check-Server.cmd`。通过后用 `.\Create-User.cmd artist` 创建自己的账号，再用 `.\Start-Server.cmd` 启动。跨机连接、证书和短视频验收见[离线部署说明](deploy/README.md)。
+
+**下次原样部署**，只需把未启用过的完整交付包复制到另一台有相应模型许可的 Windows x64 GPU 主机。**需要更新服务或从用过的服务器制作干净交付包**，在此仓库根目录运行下列第一条命令。它从旧包复用模型、运行时、服务 Python 和 Git，用当前仓库的源码重新生成服务、启动器和 Blender 扩展。仅有上游安装时，改用第二条。两条命令任选一条。
+
+```powershell
+python -B deploy/build_bundle.py --from-bundle 'D:\RGBMoCap-Server'
+python -B deploy/build_bundle.py --upstream '..\toyxyz_RGBMocap' --offline
+```
+
+制作机使用 Windows x64、Python 3.12、完整的 Git for Windows（`git` 在 PATH 中）和可运行 CUDA 12.8 的显卡。请在源安装和服务空闲时制作。默认输出到本仓库的 `.local\RGBMoCap-Server`。用 `--output 'D:\Releases\RGBMoCap-Server-v2'` 可指定新目录。构建器在相邻的临时目录组装，完整检查通过后才将成品移到指定位置。每次制作使用新的输出目录。
+
+- **从现成包制作**需要旧包完整保留 `engine\.git`、`assets.json`、模型及其收据。所有输入都从本地读取。
+- **从上游安装制作**需要已完成固定提交的 Windows Git 安装，模型管理器里已备齐 ExMR、GVHMR、FlowHMR 及其细化功能所需的 27 项资产，并保留安装器的便携 Python 3.12.10。制作机还需 `uv`。`--offline` 使用 uv 本机已缓存的服务依赖轮子，首次缓存缺失时可去掉该参数联网安装这些 Python 依赖。目标服务器直接使用包内的 Python。
+- **体积与去重**。参考交付包约 41.72 GiB。构建器从固定 Git 提交检出源码，按安装清单补齐外部资源，复制八个独立运行时目录及 `tools/bin`，按模型注册表从 `engine/models` 对应的源目录各取一份。上游运行时会在 `third_party` 下重建检查点别名，也可能生成 `cache/exmr`。制作新包时跳过这些目录和原服务的账号、项目、上传、结果及日志。
+- **模型核验**。26 项资产采用上游固定 SHA-256，SMPL-X Neutral 采用制作时从已获授权的本地文件计算的 SHA-256，以便目标机验证传输完整性。从旧包重建时会沿用它记录的哈希。GitHub 只保存构建代码、启动器、依赖版本和说明，模型与运行时保存在私有交付目录。上游及模型条款见[上游许可说明](https://github.com/toyxyz/toyxyz_RGBMocap/blob/42844135d0612c7e574fd43f6c42414f5fce1219/THIRD_PARTY_NOTICES.md)。
+
+在 RTX 5060 Ti 开发机上，使用 `--upstream --offline` 从本机安装和缓存重新制作的交付包通过了 27 项文件校验、六个工作环境检查和两套 CUDA 实测。更换目录后，随包启动器完成了建号、登录、视频上传和项目创建，ExMR 工作进程准备了 48 帧、30 fps 的输入。客户端 ZIP 通过了 Blender 5.3 的扩展校验。每台新服务器的重建、FBX 导出与工作站导入，按离线部署说明中的短视频流程验收。
+
 ## 启动任务服务
 
 1. 在 Windows GPU 主机上完成上游安装，关闭上游界面，并在模型管理器里准备要使用的模型。服务会核对上游提交和运行环境，并在运行期间独占该安装。所用版本和提供方条款见 [上游固定版本](https://github.com/toyxyz/toyxyz_RGBMocap/tree/42844135d0612c7e574fd43f6c42414f5fce1219) 和 [模型许可](https://github.com/toyxyz/toyxyz_RGBMocap/blob/42844135d0612c7e574fd43f6c42414f5fce1219/THIRD_PARTY_NOTICES.md)。

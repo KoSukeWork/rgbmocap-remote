@@ -15,10 +15,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from . import PIN
 from .dispatcher import Dispatcher
 from .store import LICENSE_VERSION, Problem, Store, digest, encode, event, ident
 
-PIN = "42844135d0612c7e574fd43f6c42414f5fce1219"
 PREFIX = "/api/v1"
 CHUNK = 8 * 1024**2
 Model = Literal["gvhmr", "exmr", "flowhmr"]
