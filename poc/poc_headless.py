@@ -109,7 +109,7 @@ def verify_install(root: Path):
         raise SystemExit(f'Run install.cmd before running the PoC: {exc}') from exc
 
 
-def run_stage(root: Path, env: dict, stage: str, arguments: list[str], log):
+def run_stage(root: Path, env: dict, stage: str, arguments: list[str], log, on_progress=None):
     import psutil
     from gpu_usage import GpuSampler
     from mocap.processing_guard import ProcessingGuard
@@ -147,6 +147,8 @@ def run_stage(root: Path, env: dict, stage: str, arguments: list[str], log):
                 now = time.monotonic()
                 if now - last_progress[0] >= 1.0:
                     last_progress[0] = now
+                    if on_progress is not None:
+                        on_progress(event)
                     total = event.get('total') or 0
                     done = f"{event.get('current', 0)}/{total}" if total else '...'
                     print(f"  {done} {event.get('message', '')}", flush=True)
@@ -190,11 +192,8 @@ def run_stage(root: Path, env: dict, stage: str, arguments: list[str], log):
     return code, events, time.monotonic() - started, telemetry
 
 
-def process(args, root: Path, env: dict):
-    sys.path.insert(0, str(root))
+def initial_plan(args):
     from mocap.motion_tools import MOTION_TOOLS, result_kind
-    from mocap.queue_groups import BATCH_STAGES, join_single_pipeline, remove_request, write_request
-    from mocap.storage import atomic_json
 
     tool = MOTION_TOOLS[args.model]
     # Same switches as gui.run_full with the GUI's default check boxes.
@@ -242,6 +241,36 @@ def process(args, root: Path, env: dict):
     jobs = [('prepare', prepare_args)]
     for stage in stages:
         jobs.append((stage, ['--result', result] if stage in RESULT_STAGES else None))
+    return result, video, start, end, jobs
+
+
+def next_job(jobs, project):
+    from mocap.queue_groups import join_single_pipeline
+    if project is not None:
+        jobs = join_single_pipeline(jobs, project)
+    (stage, arguments), *remaining = jobs
+    if arguments is None:
+        arguments = ['--project', str(project)]
+    elif stage in PROJECT_STAGES and '--project' not in arguments:
+        arguments = ['--project', str(project), *arguments]
+    return stage, arguments, remaining
+
+
+def fbx_export_row(project, result, target):
+    record = json.loads((project / f'{result}_mixamo.json').read_text(encoding='utf-8'))
+    return dict(project=str(project), kind=result, source=str(project / record['bvh_file']), target=str(target),
+                rig_name='Person 1', prepend_tpose=False, export_face=False, face_format='txt',
+                bvh_profile='generic', place_at_origin=False, symmetric_rest=False,
+                origin_group=str(project.resolve()), animate_camera=True, background_refine=False,
+                camera_translation_scale=1.0)
+
+
+def process(args, root: Path, env: dict):
+    sys.path.insert(0, str(root))
+    from mocap.queue_groups import BATCH_STAGES, remove_request, write_request
+    from mocap.storage import atomic_json
+    result, video, start, end, jobs = initial_plan(args)
+    stages = [stage for stage, _ in jobs[1:]]
 
     print(f'model={args.model} result={result}\nstages={stages}', flush=True)
     report = {'model': args.model, 'result': result, 'video': str(video), 'start': start,
@@ -269,13 +298,7 @@ def process(args, root: Path, env: dict):
 
     with open(args.out / 'worker.log', 'w', encoding='utf-8') as log:
         while jobs:
-            if project is not None:
-                jobs = join_single_pipeline(jobs, project)
-            stage, arguments = jobs.pop(0)
-            if arguments is None:
-                arguments = ['--project', str(project)]
-            elif stage in PROJECT_STAGES and '--project' not in arguments:
-                arguments = ['--project', str(project), *arguments]
+            stage, arguments, jobs = next_job(jobs, project)
             job_project = arguments[arguments.index('--project') + 1] if '--project' in arguments else None
             request = None
             if stage in BATCH_STAGES:
@@ -296,13 +319,8 @@ def process(args, root: Path, env: dict):
         mixamo = project / f'{result}_mixamo.json'
         if not mixamo.exists():
             checked('rig', ['--project', str(project), '--result', result], log)
-        record = json.loads(mixamo.read_text(encoding='utf-8'))
         target = (args.out / f'{args.model}_{result}.fbx').resolve()
-        row = dict(project=str(project), kind=result, source=str(project / record['bvh_file']), target=str(target),
-                   rig_name='Person 1', prepend_tpose=False, export_face=False, face_format='txt',
-                   bvh_profile='generic', place_at_origin=False, symmetric_rest=False,
-                   origin_group=str(project.resolve()), animate_camera=True, background_refine=False,
-                   camera_translation_scale=1.0)
+        row = fbx_export_row(project, result, target)
         request = project / ('.fbx-export-' + uuid.uuid4().hex + '.json')
         atomic_json(request, [row])
         try:

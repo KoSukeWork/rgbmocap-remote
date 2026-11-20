@@ -1,6 +1,66 @@
 # RGBMoCap Remote
 
-本项目验证如何在 Windows 上通过脚本调用 RGBMoCap 的单人动捕流程，为局域网任务服务和 Blender 扩展做准备。当前代码支持 GVHMR、ExMR 和 FlowHMR，可以从视频导出 FBX，并将中间结果与原版界面独立运行的结果比较。
+在 Blender 5.3 中选择一段单人视频，交给 Windows 服务器上的 ExMR、GVHMR 或 FlowHMR 重建，再把带关键帧的 FBX 骨架导入当前场景。客户端只需要 Blender。服务端复用上游固定版本的 Python、CUDA 模型和导出工具。
+
+## 启动任务服务
+
+1. 在 Windows GPU 主机上完成上游安装，关闭上游界面，并在模型管理器里准备要使用的模型。服务会核对上游提交和运行环境，并在运行期间独占该安装。所用版本和提供方条款见 [上游固定版本](https://github.com/toyxyz/toyxyz_RGBMocap/tree/42844135d0612c7e574fd43f6c42414f5fce1219) 和 [模型许可](https://github.com/toyxyz/toyxyz_RGBMocap/blob/42844135d0612c7e574fd43f6c42414f5fce1219/THIRD_PARTY_NOTICES.md)。
+2. 在本仓库根目录打开 PowerShell。以下示例使用 Python 3.12 和 uv，假设上游目录与本仓库相邻。首次创建账号时会显示一次个人令牌，用于 Blender 登录。
+
+```powershell
+uv venv --python 3.12 .venv
+uv pip install --python .\.venv\Scripts\python.exe -r service\requirements.txt
+$python = '.\.venv\Scripts\python.exe'
+$upstream = (Resolve-Path '..\toyxyz_RGBMocap').Path
+$data = Join-Path $PWD '.local\service-data'
+& $python -m service --data $data create-user artist
+& $python -m service --data $data serve --upstream $upstream
+```
+
+3. 本机默认连接 `http://127.0.0.1:8765`。从另一台电脑使用时，准备与服务器主机名匹配的 TLS 证书，让客户端信任签发机构。以如下方式监听局域网，扩展里填入相应的 `https://主机名:8765`。将证书和私钥路径换成本机文件。
+
+```powershell
+& $python -m service --data $data serve --upstream $upstream --host 0.0.0.0 --port 8765 --cert D:\certs\server.pem --key D:\certs\server-key.pem
+```
+
+服务以前台进程运行。按 Ctrl+C 可以停止，用同一数据目录重启会恢复排队任务，从中断的步骤重新开始。该目录包含原视频、工作文件、结果和账号数据库，请放在服务账号可读写的私有位置，与上游安装目录分开。需要撤销令牌时运行 `disable-user artist`，用法同 `create-user`。
+
+## 安装和使用 Blender 扩展
+
+从源码构建可安装的 ZIP。在本仓库根目录运行以下命令，把 `$blender` 换成 Blender 5.3 的程序路径。
+
+```powershell
+$blender = 'C:\Program Files\Blender Foundation\Blender 5.3\blender.exe'
+New-Item -ItemType Directory -Force .local\dist | Out-Null
+& $blender --command extension build --source-dir addon\rgbmocap_remote --output-file .local\dist\rgbmocap_remote-0.1.0.zip
+```
+
+1. 在 Blender 偏好设置的扩展菜单中选 **Install from Disk**，安装 ZIP 并启用 **RGBMoCap Remote**。在系统偏好设置中启用 **Allow Online Access**。
+2. 在 3D 视图按 **N**，打开 **RGBMoCap** 标签。填入服务器地址和个人令牌，点击 **连接**。首次使用时阅读提供方条款，由账号本人确认非商用用途。令牌只在当前会话的内存中使用。
+3. 选取 MP4 或 MOV，选择模型，按秒填写要处理的起止位置。结束填 0 表示片尾。展开 **重建选项** 可调整接触修正、低显存模式以及所选模型的参数，然后点击 **提交重建**。FlowHMR 当前使用上游默认相机和采样设置。
+4. 面板会刷新各任务的状态和当前步骤。任务提交后可以关闭 Blender，重新连接后仍能查看自己的任务。排队或运行中的任务可取消，失败或取消的任务可以重新排队。
+5. 选中已完成的任务，点击 **导入动作并设置场景帧率和范围**。扩展先校验下载文件的 SHA-256，再导入骨架和动作，将场景帧率及播放范围设为该片段。再次导入相同结果时会复用场景内已有的骨架。
+
+当前版本支持单人骨架动画。多人选取、身体网格、视频与相机叠加、接触区间编辑和角色重定向仍待实现。扩展清单的 GPL-3.0-or-later 标识适用于 Blender 扩展代码。上游软件和各模型采用各自的许可。
+
+## 队列与验证
+
+每步独立调度，服务器最多同时执行一个 GPU 步骤和两个 CPU 步骤。一个账号最多占一个 CPU 位置，同一项目内的任务串行。挑选下一步时优先考虑近一小时 GPU 用时较少的用户。任务所有权、步骤进度和重试状态保存在 SQLite 中。
+
+在 RTX 5060 Ti 开发机上，三个测试账号分别用 ExMR、GVHMR 和 FlowHMR 重建了同一段 2.8 秒视频。Blender 5.3.0 导入的三个动作均为 65 根骨骼、84 帧、30 fps，首帧与中间帧的骨骼姿态有变化。另一个通过扩展提交、取消并重试的 ExMR 任务导入了 48 帧。测试也覆盖了服务重启恢复、局部下载续传和本机 HTTPS 连接。5090 服务器的跨机部署仍待验证。
+
+运行接口和调度回归测试可使用以下命令。测试使用临时数据目录。
+
+```powershell
+uv pip install --python .\.venv\Scripts\python.exe httpx2==2.16.2
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+若已安装并启用扩展，还可用后台 Blender 对已完成的任务做导入回归。给该进程设置环境变量 `RGBMOCAP_TEST_TOKEN`，使用已确认许可的测试账号。把任务 ID 换成该账号的真实任务。使用 `--video D:\clips\walk.mp4 --model exmr --end 2.8` 可提交新任务并等待导入。
+
+```powershell
+& $blender --background --online-mode --python-exit-code 1 --python tests\blender_smoke.py -- --server http://127.0.0.1:8765 --job 'j_替换为实际任务ID'
+```
 
 ## 运行一次动捕
 
