@@ -1,0 +1,13 @@
+# Publish only reviewed files. Add a path here when introducing new public source.
+*
+!/.gitignore
+!/README.md
+!/poc/
+!/poc/gpu_usage.py
+!/poc/gui_baseline.py
+!/poc/poc_headless.py
+!/poc/probe_flow_batches.py
+!/poc/session_probe.py
+!/poc/SessionProbeService.cs
+!/poc/test_comparison.py
+!/poc/Test-ServiceSession.ps1
